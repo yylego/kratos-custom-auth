@@ -11,12 +11,12 @@ package customkratosauth
 
 import (
 	"context"
+	"log/slog"
 
-	"github.com/go-kratos/kratos/v2/errors"
-	"github.com/go-kratos/kratos/v2/log"
-	"github.com/go-kratos/kratos/v2/middleware"
-	"github.com/go-kratos/kratos/v2/middleware/selector"
-	"github.com/go-kratos/kratos/v2/transport"
+	"github.com/go-kratos/kratos/v3/errors"
+	"github.com/go-kratos/kratos/v3/middleware"
+	"github.com/go-kratos/kratos/v3/middleware/selector"
+	"github.com/go-kratos/kratos/v3/transport"
 	"github.com/yylego/kratos-auth/authkratos"
 	"github.com/yylego/neatjson/neatjsons"
 )
@@ -98,42 +98,37 @@ func (c *Config) WithNewSpanHook(fn authkratos.NewSpanHookFunc) *Config {
 	return c
 }
 
-func NewMiddleware(cfg *Config, logger log.Logger) middleware.Middleware {
-	slog := log.NewHelper(logger)
-	slog.Infof(
-		"custom-kratos-auth: new middleware field-name=%v side=%v operations=%d debug-mode=%v",
-		cfg.fieldName,
-		cfg.routeScope.Side,
-		len(cfg.routeScope.OperationSet),
-		authkratos.BooleanToNum(cfg.debugMode),
+func NewMiddleware(cfg *Config, applog *slog.Logger) middleware.Middleware {
+	applog.Info(
+		"custom-kratos-auth: new middleware",
+		"field-name", cfg.fieldName,
+		"side", cfg.routeScope.Side,
+		"operations", len(cfg.routeScope.OperationSet),
+		"debug-mode", authkratos.BooleanToNum(cfg.debugMode),
 	)
 	if cfg.debugMode {
-		slog.Debugf("custom-kratos-auth: new middleware field-name=%v route-scope: %s", cfg.fieldName, neatjsons.S(cfg.routeScope))
+		applog.Debug("custom-kratos-auth: new middleware route-scope", "field-name", cfg.fieldName, "route-scope", neatjsons.S(cfg.routeScope))
 	}
-	return selector.Server(middlewareFunc(cfg, logger)).Match(matchFunc(cfg, logger)).Build()
+	return selector.Server(middlewareFunc(cfg, applog)).Match(matchFunc(cfg, applog)).Build()
 }
 
-func matchFunc(cfg *Config, logger log.Logger) selector.MatchFunc {
-	slog := log.NewHelper(logger)
-
+func matchFunc(cfg *Config, applog *slog.Logger) selector.MatchFunc {
 	return func(ctx context.Context, operation string) bool {
 		defer authkratos.RunSpanHooks(ctx, cfg.spanHooks, "custom-kratos-auth-match")()
 
 		match := cfg.routeScope.Match(operation)
 		if cfg.debugMode {
 			if match {
-				slog.Debugf("custom-kratos-auth: operation=%s side=%v match=%d next -> check auth", operation, cfg.routeScope.Side, authkratos.BooleanToNum(match))
+				applog.Debug("custom-kratos-auth: match next -> check auth", "operation", operation, "side", cfg.routeScope.Side, "match", authkratos.BooleanToNum(match))
 			} else {
-				slog.Debugf("custom-kratos-auth: operation=%s side=%v match=%d skip -- check auth", operation, cfg.routeScope.Side, authkratos.BooleanToNum(match))
+				applog.Debug("custom-kratos-auth: match skip -- check auth", "operation", operation, "side", cfg.routeScope.Side, "match", authkratos.BooleanToNum(match))
 			}
 		}
 		return match
 	}
 }
 
-func middlewareFunc(cfg *Config, logger log.Logger) middleware.Middleware {
-	slog := log.NewHelper(logger)
-
+func middlewareFunc(cfg *Config, applog *slog.Logger) middleware.Middleware {
 	return func(handleFunc middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (interface{}, error) {
 			if tsp, ok := transport.FromServerContext(ctx); ok {
@@ -142,14 +137,14 @@ func middlewareFunc(cfg *Config, logger log.Logger) middleware.Middleware {
 				authToken := tsp.RequestHeader().Get(cfg.fieldName)
 				if authToken == "" {
 					if cfg.debugMode {
-						slog.Debugf("custom-kratos-auth: auth-token is missing")
+						applog.Debug("custom-kratos-auth: auth-token is missing")
 					}
 					return nil, errors.Unauthorized("UNAUTHORIZED", "custom-kratos-auth: auth-token is missing")
 				}
 				ctx, erk := cfg.checkToken(ctx, authToken)
 				if erk != nil {
 					if cfg.debugMode {
-						slog.Debugf("custom-kratos-auth: auth-token mismatch: %s", erk.Error())
+						applog.Debug("custom-kratos-auth: auth-token mismatch", "reason", erk.Error())
 					}
 					return nil, erk
 				}
