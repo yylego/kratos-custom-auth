@@ -1,9 +1,13 @@
+<!-- TEMPLATE (EN) BEGIN: BADGES -->
+
 [![GitHub Workflow Status (branch)](https://img.shields.io/github/actions/workflow/status/yylego/kratos-custom-auth/release.yml?branch=main&label=BUILD)](https://github.com/yylego/kratos-custom-auth/actions/workflows/release.yml?query=branch%3Amain)
 [![GoDoc](https://pkg.go.dev/badge/github.com/yylego/kratos-custom-auth)](https://pkg.go.dev/github.com/yylego/kratos-custom-auth)
 [![Coverage Status](https://img.shields.io/coveralls/github/yylego/kratos-custom-auth/main.svg)](https://coveralls.io/github/yylego/kratos-custom-auth?branch=main)
-[![Supported Go Versions](https://img.shields.io/badge/Go-1.25+-lightgrey.svg)](https://go.dev/)
+[![Supported Go Versions](https://img.shields.io/badge/Go-1.26%2B-lightgrey.svg)](https://go.dev/)
 [![GitHub Release](https://img.shields.io/github/release/yylego/kratos-custom-auth.svg)](https://github.com/yylego/kratos-custom-auth/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yylego/kratos-custom-auth)](https://goreportcard.com/report/github.com/yylego/kratos-custom-auth)
+
+<!-- TEMPLATE (EN) CLOSE: BADGES -->
 
 # kratos-custom-auth
 
@@ -17,15 +21,15 @@ Custom token authentication middleware with self-defined validation functions.
 
 [中文说明](README.zh.md)
 
-<!-- TEMPLATE (EN) END: LANGUAGE NAVIGATION -->
+<!-- TEMPLATE (EN) CLOSE: LANGUAGE NAVIGATION -->
 
 ## Main Features
 
-🎯 **Custom Validation**: Authenticate with self-defined token check functions
-🔌 **Context Injection**: Auto-inject authenticated data into request context
-🛡️ **Route Scope Filtering**: Selective authentication based on route scope
-📡 **APM Tracing**: Pluggable span hook integration via `authkratos.SpanHook`
-⚙️ **Configurable Fields**: Custom request field name and debug mode
+- 🎯 **Custom Validation**: Authenticate with self-defined token check functions
+- 🔌 **Context Injection**: Auto-inject authenticated data into request context
+- 🛡️ **Route Scope Filtering**: Selective authentication based on route scope
+- 🪵 **Debug Logs**: Each route match and auth outcome goes to the logger at debug level, and the logger level decides if it shows
+- ⚙️ **Configurable Field**: Custom request field name, default is `Authorization`
 
 ## Installation
 
@@ -36,18 +40,47 @@ go get github.com/yylego/kratos-custom-auth
 ## Usage
 
 ```go
-import "github.com/yylego/kratos-custom-auth/customkratosauth"
+import (
+    "context"
+    "log/slog"
 
-// Define custom token check function
-checkFunc := func(ctx context.Context, token string) (context.Context, *errors.Error) {
-    // validate token and inject account info into context
-    return ctx, nil
+    "github.com/go-kratos/kratos/v3/errors"
+    "github.com/go-kratos/kratos/v3/transport/http"
+    "github.com/yylego/kratos-auth/authkratos"
+    "github.com/yylego/kratos-custom-auth/customkratosauth"
+)
+
+type ctxAccount struct{}
+
+func newHTTPServer(logger *slog.Logger) *http.Server {
+    // Routes that need auth, written as the operation names that protoc-gen-go-http generates
+    routeScope := authkratos.NewInclude(
+        "/api.Student/CreateStudent",
+        "/api.Student/UpdateStudent",
+    )
+
+    // Check the token and put the account into the context; a failed check returns the error the client gets
+    checkToken := func(ctx context.Context, token string) (context.Context, *errors.Error) {
+        account, ok := lookupAccount(token) // the token store you keep
+        if !ok {
+            return ctx, errors.Unauthorized("TOKEN_MISMATCH", "token mismatch")
+        }
+        return context.WithValue(ctx, ctxAccount{}, account), nil
+    }
+
+    cfg := customkratosauth.NewConfig(routeScope, checkToken).
+        WithFieldName("AdminToken") // read the token from this request field, default is Authorization
+    return http.NewServer(http.Middleware(customkratosauth.NewMiddleware(cfg, logger)))
 }
 
-// Create config and middleware
-cfg := customkratosauth.NewConfig(routeScope, checkFunc)
-mw := customkratosauth.NewMiddleware(cfg, logger)
+// In the service code, read the account the check put in
+func accountFrom(ctx context.Context) string {
+    account, _ := ctx.Value(ctxAccount{}).(string)
+    return account
+}
 ```
+
+Requests to routes in the scope get `401 UNAUTHORIZED` when the token is missing, and the error from `checkToken` when the check fails. Routes outside the scope pass through.
 
 ---
 
@@ -109,10 +142,4 @@ Welcome to contribute to this project via submitting merge requests and reportin
 
 **Have Fun Coding with this package!** 🎉🎉🎉
 
-<!-- TEMPLATE (EN) END: STANDARD PROJECT FOOTER -->
-
----
-
-## GitHub Stars
-
-[![Stargazers](https://starchart.cc/yylego/kratos-custom-auth.svg?variant=adaptive)](https://starchart.cc/yylego/kratos-custom-auth)
+<!-- TEMPLATE (EN) CLOSE: STANDARD PROJECT FOOTER -->

@@ -1,9 +1,13 @@
+<!-- TEMPLATE (ZH) BEGIN: BADGES -->
+
 [![GitHub Workflow Status (branch)](https://img.shields.io/github/actions/workflow/status/yylego/kratos-custom-auth/release.yml?branch=main&label=BUILD)](https://github.com/yylego/kratos-custom-auth/actions/workflows/release.yml?query=branch%3Amain)
 [![GoDoc](https://pkg.go.dev/badge/github.com/yylego/kratos-custom-auth)](https://pkg.go.dev/github.com/yylego/kratos-custom-auth)
 [![Coverage Status](https://img.shields.io/coveralls/github/yylego/kratos-custom-auth/main.svg)](https://coveralls.io/github/yylego/kratos-custom-auth?branch=main)
-[![Supported Go Versions](https://img.shields.io/badge/Go-1.25+-lightgrey.svg)](https://go.dev/)
+[![Supported Go Versions](https://img.shields.io/badge/Go-1.26%2B-lightgrey.svg)](https://go.dev/)
 [![GitHub Release](https://img.shields.io/github/release/yylego/kratos-custom-auth.svg)](https://github.com/yylego/kratos-custom-auth/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yylego/kratos-custom-auth)](https://goreportcard.com/report/github.com/yylego/kratos-custom-auth)
+
+<!-- TEMPLATE (ZH) CLOSE: BADGES -->
 
 # kratos-custom-auth
 
@@ -17,15 +21,15 @@
 
 [ENGLISH README](README.md)
 
-<!-- TEMPLATE (ZH) END: LANGUAGE NAVIGATION -->
+<!-- TEMPLATE (ZH) CLOSE: LANGUAGE NAVIGATION -->
 
 ## 核心特性
 
-🎯 **自定义验证**: 使用用户定义的令牌检查函数进行认证
-🔌 **上下文注入**: 认证成功后自动将用户信息注入请求上下文
-🛡️ **路由范围过滤**: 基于路由范围的选择性认证
-📡 **APM 追踪**: 通过 `authkratos.SpanHook` 进行可插拔的 span 钩子集成
-⚙️ **可配置字段**: 自定义请求头字段名和调试模式
+- 🎯 **自定义验证**: 使用用户定义的令牌检查函数进行认证
+- 🔌 **上下文注入**: 认证成功后自动将用户信息注入请求上下文
+- 🛡️ **路由范围过滤**: 基于路由范围的选择性认证
+- 🪵 **调试日志**: 每次路由匹配和认证结果以 debug 级别写进日志，显示与否由日志级别决定
+- ⚙️ **可配置字段**: 自定义请求头字段名，默认是 `Authorization`
 
 ## 安装
 
@@ -36,18 +40,47 @@ go get github.com/yylego/kratos-custom-auth
 ## 使用方法
 
 ```go
-import "github.com/yylego/kratos-custom-auth/customkratosauth"
+import (
+    "context"
+    "log/slog"
 
-// 定义自定义令牌检查函数
-checkFunc := func(ctx context.Context, token string) (context.Context, *errors.Error) {
-    // 验证令牌并将用户信息注入 context
-    return ctx, nil
+    "github.com/go-kratos/kratos/v3/errors"
+    "github.com/go-kratos/kratos/v3/transport/http"
+    "github.com/yylego/kratos-auth/authkratos"
+    "github.com/yylego/kratos-custom-auth/customkratosauth"
+)
+
+type ctxAccount struct{}
+
+func newHTTPServer(logger *slog.Logger) *http.Server {
+    // 要认证的路由，用 protoc-gen-go-http 生成的 operation 名
+    routeScope := authkratos.NewInclude(
+        "/api.Student/CreateStudent",
+        "/api.Student/UpdateStudent",
+    )
+
+    // 校验令牌并把账号放进 context；校验失败时返回的错误会原样回给客户端
+    checkToken := func(ctx context.Context, token string) (context.Context, *errors.Error) {
+        account, ok := lookupAccount(token) // 自己的令牌存储
+        if !ok {
+            return ctx, errors.Unauthorized("TOKEN_MISMATCH", "token mismatch")
+        }
+        return context.WithValue(ctx, ctxAccount{}, account), nil
+    }
+
+    cfg := customkratosauth.NewConfig(routeScope, checkToken).
+        WithFieldName("AdminToken") // 从这个请求头读令牌，默认是 Authorization
+    return http.NewServer(http.Middleware(customkratosauth.NewMiddleware(cfg, logger)))
 }
 
-// 创建配置和中间件
-cfg := customkratosauth.NewConfig(routeScope, checkFunc)
-mw := customkratosauth.NewMiddleware(cfg, logger)
+// 业务代码里取出校验时放进去的账号
+func accountFrom(ctx context.Context) string {
+    account, _ := ctx.Value(ctxAccount{}).(string)
+    return account
+}
 ```
+
+范围内的路由：没带令牌返回 `401 UNAUTHORIZED`，校验失败返回 `checkToken` 给的错误。范围外的路由直接放行。
 
 ---
 
@@ -109,10 +142,4 @@ MIT 许可证 - 详见 [LICENSE](LICENSE)。
 
 **祝你用这个包编程愉快！** 🎉🎉🎉
 
-<!-- TEMPLATE (ZH) END: STANDARD PROJECT FOOTER -->
-
----
-
-## GitHub 标星点赞
-
-[![标星点赞](https://starchart.cc/yylego/kratos-custom-auth.svg?variant=adaptive)](https://starchart.cc/yylego/kratos-custom-auth)
+<!-- TEMPLATE (ZH) CLOSE: STANDARD PROJECT FOOTER -->
