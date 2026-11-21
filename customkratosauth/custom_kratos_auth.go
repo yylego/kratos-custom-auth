@@ -22,7 +22,7 @@ import (
 
 // CheckTokenAndSetCtxFunc validates auth token and injects account data into context
 // Parameters: ctx - current request context, token - authentication token
-// Returns: new context (with account data if present) and validation status
+// Returns: new context (with account data if present) and the error of a failed check
 // On success, account data gets injected into context accessible to downstream handlers
 //
 // CheckTokenAndSetCtxFunc 验证认证令牌并将用户信息注入上下文
@@ -30,6 +30,13 @@ import (
 // 返回：新的 context（可能包含用户信息）和错误
 // 认证成功时可以将用户信息注入到返回的 context 中，供后续处理程序使用
 type CheckTokenAndSetCtxFunc func(ctx context.Context, token string) (context.Context, *errors.Error)
+
+// NewErkFunc builds the error the middleware responds with
+// It runs on each request that hits the case, so it is the place to write a log when one is wanted
+//
+// NewErkFunc 构造中间件要返回的错误
+// 每个走到这一步的请求都会调用它，想记日志就写在这里面
+type NewErkFunc func(ctx context.Context) *errors.Error
 
 // Config holds the custom auth middleware configuration
 // Combines route scope and token validation function
@@ -42,6 +49,7 @@ type Config struct {
 	routeScope *authkratos.RouteScope  // Route scope which auth applies to // 认证应用的路由范围
 	checkToken CheckTokenAndSetCtxFunc // Custom token validation function // 自定义令牌验证函数
 	fieldName  string                  // Request field name extracting auth token // 提取认证令牌的请求头字段名
+	missingErk NewErkFunc              // Builds the response when the token is missing, unset means the default 401 UNAUTHORIZED // 没带令牌时构造返回的错误，不设置就用默认的 401 UNAUTHORIZED
 }
 
 // NewConfig creates a new custom auth config with route scope and token check function
@@ -71,19 +79,31 @@ func (c *Config) WithFieldName(fieldName string) *Config {
 	return c
 }
 
-// GetFieldName gets request field name used in authentication
+// WithMissingErk sets the function that builds the response when a request inside the scope brings no token
+// Without it the middleware responds 401 UNAUTHORIZED, with it the client can get the same reason as a failed check
+// so one branch in the client handles both cases
 //
-// GetFieldName 获取请求头中用于认证的字段名
-func (c *Config) GetFieldName() string {
+// WithMissingErk 设置范围内的请求没带令牌时用来构造错误的函数
+// 不设置时中间件返回 401 UNAUTHORIZED；设置后客户端拿到的 reason 可以跟校验失败时相同
+// 客户端用同一个分支就能处理两种情况
+func (c *Config) WithMissingErk(newErk NewErkFunc) *Config {
+	c.missingErk = newErk
+	return c
+}
+
+// FieldName returns the request field name used in authentication
+//
+// FieldName 返回请求头中用于认证的字段名
+func (c *Config) FieldName() string {
 	return c.fieldName
 }
 
 // NewMiddleware creates the auth middleware: routes inside the scope need a token that passes checkToken
-// A missing token gets 401 UNAUTHORIZED, a failed check returns the error from checkToken, routes outside the scope pass through
+// A missing token gets 401 UNAUTHORIZED (change it with WithMissingErk), a failed check returns the error from checkToken, routes outside the scope pass through
 // Each match and each auth outcome goes to applog at debug level, so the level of applog decides if it shows
 //
 // NewMiddleware 创建认证中间件：范围内的路由要带令牌，并通过 checkToken 校验
-// 没带令牌返回 401 UNAUTHORIZED，校验失败返回 checkToken 给的错误，范围外的路由直接放行
+// 没带令牌返回 401 UNAUTHORIZED（可用 WithMissingErk 换成别的错误），校验失败返回 checkToken 给的错误，范围外的路由直接放行
 // 每次匹配和每次认证结果都以 debug 级别写进 applog，显示与否由 applog 的日志级别决定
 func NewMiddleware(cfg *Config, applog *slog.Logger) middleware.Middleware {
 	applog.Info(
@@ -109,18 +129,22 @@ func middlewareFunc(cfg *Config, applog *slog.Logger) middleware.Middleware {
 		return func(ctx context.Context, req any) (any, error) {
 			tsp, ok := transport.FromServerContext(ctx)
 			if !ok {
-				return nil, errors.Unauthorized("UNAUTHORIZED", "custom-kratos-auth: wrong context")
+				return nil, errors.Unauthorized("UNAUTHORIZED", "custom-kratos-auth: no server transport in the context")
 			}
 			authToken := tsp.RequestHeader().Get(cfg.fieldName)
 			if authToken == "" {
-				applog.Debug("custom-kratos-auth: auth-token is missing")
+				applog.Debug("custom-kratos-auth: request rejected, auth-token is missing")
+				if cfg.missingErk != nil {
+					return nil, cfg.missingErk(ctx)
+				}
 				return nil, errors.Unauthorized("UNAUTHORIZED", "custom-kratos-auth: auth-token is missing")
 			}
 			ctx, erk := cfg.checkToken(ctx, authToken)
 			if erk != nil {
-				applog.Debug("custom-kratos-auth: auth-token mismatch", "reason", erk.Error())
+				applog.Debug("custom-kratos-auth: request rejected, auth-token mismatch", "reason", erk.Error())
 				return nil, erk
 			}
+			applog.Debug("custom-kratos-auth: request passed")
 			return handleFunc(ctx, req)
 		}
 	}

@@ -80,7 +80,7 @@ func accountFrom(ctx context.Context) string {
 }
 ```
 
-范围内的路由：没带令牌返回 `401 UNAUTHORIZED`，校验失败返回 `checkToken` 给的错误。范围外的路由直接放行。
+范围内的路由：没带令牌返回 `401 UNAUTHORIZED`，校验失败返回 `checkToken` 给的错误。范围外的路由直接放行。想让没带令牌时也返回自己的错误码，用 `WithMissingErk(func(ctx context.Context) *errors.Error { return errors.Unauthorized("TOKEN_MISMATCH", "please sign in") })`，客户端用同一个分支处理两种情况；想记日志就写在这个函数里。
 
 ---
 

@@ -82,7 +82,7 @@ func sendRequest(t *testing.T, address string, fieldName string, token string) (
 
 func TestNewConfig(t *testing.T) {
 	cfg := NewConfig(authkratos.NewInclude("/api.Demo/Profile"), checkToken)
-	require.Equal(t, "Authorization", cfg.GetFieldName())
+	require.Equal(t, "Authorization", cfg.FieldName())
 }
 
 func TestConfig_WithFieldName(t *testing.T) {
@@ -99,10 +99,22 @@ func TestConfig_WithFieldName(t *testing.T) {
 	require.Equal(t, 401, code)
 }
 
-func TestConfig_GetFieldName(t *testing.T) {
+func TestConfig_WithMissingErk(t *testing.T) {
+	cfg := NewConfig(authkratos.NewInclude("/api.Demo/Profile"), checkToken).
+		WithMissingErk(func(ctx context.Context) *errors.Error {
+			return errors.Unauthorized("TOKEN_MISMATCH", "please sign in")
+		})
+	server := newTestServer(t, cfg, slog.Default())
+
+	code, body := sendRequest(t, server.URL+"/profile", "Authorization", "")
+	require.Equal(t, 401, code)
+	require.Equal(t, `{"code":401,"reason":"TOKEN_MISMATCH","message":"please sign in"}`, body)
+}
+
+func TestConfig_FieldName(t *testing.T) {
 	cfg := NewConfig(authkratos.NewInclude("/api.Demo/Profile"), checkToken)
-	require.Equal(t, "Authorization", cfg.GetFieldName())
-	require.Equal(t, "X-Token", cfg.WithFieldName("X-Token").GetFieldName())
+	require.Equal(t, "Authorization", cfg.FieldName())
+	require.Equal(t, "X-Token", cfg.WithFieldName("X-Token").FieldName())
 }
 
 // TestNewMiddleware_DebugLogs checks the debug logs show at debug level and are hidden at info level
@@ -120,8 +132,14 @@ func TestNewMiddleware_DebugLogs(t *testing.T) {
 			},
 		}))
 		server := newTestServer(t, NewConfig(authkratos.NewInclude("/api.Demo/Profile"), checkToken), logger)
-		code, _ := sendRequest(t, server.URL+"/profile", "Authorization", "wrong-token")
+		// One request of each outcome: no token, a wrong token, the right token
+		// 三种结果各发一个请求：没带令牌、令牌不对、令牌正确
+		code, _ := sendRequest(t, server.URL+"/profile", "Authorization", "")
 		require.Equal(t, 401, code)
+		code, _ = sendRequest(t, server.URL+"/profile", "Authorization", "wrong-token")
+		require.Equal(t, 401, code)
+		code, _ = sendRequest(t, server.URL+"/profile", "Authorization", "secret-token")
+		require.Equal(t, 200, code)
 		return output.String()
 	}
 
@@ -131,7 +149,11 @@ func TestNewMiddleware_DebugLogs(t *testing.T) {
 	require.Equal(t, `level=INFO msg="custom-kratos-auth: new middleware" field-name=Authorization side=INCLUDE operations=1
 level=DEBUG msg="custom-kratos-auth: new middleware route-scope" route-scope="&{Side:INCLUDE OperationSet:map[/api.Demo/Profile:true]}"
 level=DEBUG msg="custom-kratos-auth: route match" operation=/api.Demo/Profile side=INCLUDE match=true
-level=DEBUG msg="custom-kratos-auth: auth-token mismatch" reason="error: code = 401 reason = TOKEN_MISMATCH message = token mismatch metadata = map[] cause = <nil>"
+level=DEBUG msg="custom-kratos-auth: request rejected, auth-token is missing"
+level=DEBUG msg="custom-kratos-auth: route match" operation=/api.Demo/Profile side=INCLUDE match=true
+level=DEBUG msg="custom-kratos-auth: request rejected, auth-token mismatch" reason="error: code = 401 reason = TOKEN_MISMATCH message = token mismatch metadata = map[] cause = <nil>"
+level=DEBUG msg="custom-kratos-auth: route match" operation=/api.Demo/Profile side=INCLUDE match=true
+level=DEBUG msg="custom-kratos-auth: request passed"
 `, collectLogs(slog.LevelDebug))
 }
 

@@ -80,7 +80,7 @@ func accountFrom(ctx context.Context) string {
 }
 ```
 
-Requests to routes in the scope get `401 UNAUTHORIZED` when the token is missing, and the error from `checkToken` when the check fails. Routes outside the scope pass through.
+Requests to routes in the scope get `401 UNAUTHORIZED` when the token is missing, and the error from `checkToken` when the check fails. Routes outside the scope pass through. To respond with a custom reason when the token is missing, use `WithMissingErk(func(ctx context.Context) *errors.Error { return errors.Unauthorized("TOKEN_MISMATCH", "please sign in") })`, so one branch in the client handles both cases; write a log inside this function when one is wanted.
 
 ---
 
